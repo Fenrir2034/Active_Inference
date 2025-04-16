@@ -1,0 +1,118 @@
+# === IMPORTS ===
+import numpy as np
+import matplotlib.pyplot as plt
+from pymdp.agent import Agent
+from pymdp import utils
+
+# === MODEL DEFINITION ===
+
+# Define the shape of the environment:
+# 2 observation modalities: one with 3 possible outcomes, the other with 5
+num_obs = [3, 5]
+
+# 3 hidden state factors (dimensions = 3, 2, and 2)
+num_states = [3, 2, 2]
+
+# Agent can only control the first hidden state factor (3 options); the rest are passive
+num_controls = [3, 1, 1]
+
+# Randomly generate an A matrix (likelihood): how observations depend on hidden states
+A = utils.random_A_matrix(num_obs, num_states)
+
+# Randomly generate B matrix (transition model): how hidden states evolve over time
+B = utils.random_B_matrix(num_states, num_controls)
+
+# Set a uniform preference over observations — the agent doesn't initially "prefer" anything
+C = utils.obj_array_uniform(num_obs)
+
+# Instantiate the agent
+agent = Agent(A=A, B=B, C=C)
+
+# === SIMULATION SETUP ===
+
+T = 10  # number of timesteps = number of agent-environment interactions
+
+# Logs for tracking everything that happens
+obs_history = []              # what the agent saw
+action_history = []           # what action it took
+qs_history = [[] for _ in num_states]  # belief over hidden states at each timestep
+entropy_history = [[] for _ in num_states]  # how uncertain the agent was at each step
+efe_history = []              # expected free energy of each policy at each timestep
+
+# === SIMULATION LOOP ===
+
+for t in range(T):
+    # Simulate an observation: randomly pick one observation from each modality
+    obs = [np.random.choice(o) for o in num_obs]
+
+    # Agent performs perceptual inference: "What hidden state caused these observations?"
+    qs = agent.infer_states(obs)
+
+    # Agent plans ahead: "What actions would minimize expected surprise?"
+    q_pi, neg_efe = agent.infer_policies()
+
+    # Agent commits to action: picks an action from the lowest EFE policy
+    action = agent.sample_action()
+
+    # Log data
+    obs_history.append(obs)
+    action_history.append(action)
+    efe_history.append(neg_efe.copy())
+
+    # For each hidden state factor...
+    for f in range(len(num_states)):
+        qs_history[f].append(qs[f])  # log belief distribution
+        # compute entropy: how uncertain is the agent's belief?
+        entropy = -np.sum(qs[f] * np.log(qs[f] + 1e-16))
+        entropy_history[f].append(entropy)
+
+# === PLOTTING BELIEFS AND ENTROPY ===
+
+fig, axs = plt.subplots(len(num_states), 2, figsize=(12, 3 * len(num_states)))
+
+for f in range(len(num_states)):
+    qs_array = np.array(qs_history[f])  # beliefs over time
+
+    # Left plot: belief distribution over states
+    for s in range(num_states[f]):
+        axs[f, 0].plot(qs_array[:, s], label=f"State {s}")
+    axs[f, 0].set_title(f"Belief over Hidden State Factor {f}")
+    axs[f, 0].set_xlabel("Timestep")
+    axs[f, 0].set_ylabel("Belief")
+    axs[f, 0].legend()
+
+    # Right plot: entropy (uncertainty) over time
+    axs[f, 1].plot(entropy_history[f], color="orange")
+    axs[f, 1].set_title(f"Entropy of Beliefs (Factor {f})")
+    axs[f, 1].set_xlabel("Timestep")
+    axs[f, 1].set_ylabel("Entropy")
+
+plt.tight_layout()
+plt.show()
+
+# === PLOTTING EFE (Expected Free Energy) ===
+
+plt.figure(figsize=(8, 4))
+efe_array = np.array(efe_history)
+for i in range(efe_array.shape[1]):
+    plt.plot(efe_array[:, i], label=f"Policy {i}")
+plt.title("Expected Free Energy per Policy Over Time")
+plt.xlabel("Timestep")
+plt.ylabel("Negative EFE")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+# === TIME-STEP ===
+## timestep = one fulltime cycle realised by the agent
+###Receives an observation from the environment (e.g., [1, 4])
+###Infers hidden states (belief update via agent.infer_states(obs))
+###Evaluates potential policies (via expected free energy)
+###Chooses an action (agent.sample_action())
+###(Optionally) the environment changes due to that action
+
+# ==== CONCLUSIONS
+#Belief dynamics: how the agent’s confidence in each hidden state evolves
+#Uncertainty monitoring: how sure it is over time (entropy)
+#Policy comparison: how favorable each policy looked at each timestep
